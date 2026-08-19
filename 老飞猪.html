@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>真3D粒子爱心 - 自动全屏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a14;
+            overflow: hidden;
+            cursor: grab;
+            height: 100vh;
+            width: 100vw;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+        }
+        body:active {
+            cursor: grabbing;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        /* 全屏按钮（自动全屏失败时显示） */
+        #fullscreen-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 10;
+            padding: 12px 24px;
+            background: rgba(255, 107, 157, 0.8);
+            color: #fff;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            font-size: 16px;
+            letter-spacing: 2px;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            pointer-events: auto;
+            box-shadow: 0 8px 32px rgba(255, 107, 157, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            display: none; /* 默认隐藏，自动全屏失败时显示 */
+        }
+        #fullscreen-btn:hover {
+            background: rgba(255, 107, 157, 1);
+            box-shadow: 0 12px 40px rgba(255, 107, 157, 0.8);
+        }
+        @media (max-width: 768px) {
+            #fullscreen-btn {
+                bottom: 20px;
+                right: 20px;
+                padding: 10px 18px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button id="fullscreen-btn">进入全屏</button>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // =====================================================
+        //  【可调参数】 - 已按您的要求设为默认值
+        // =====================================================
+        const CONFIG = {
+            // ---- 心形粒子 ----
+            heartParticleCount: 200000,      // 心形粒子总数（20万）
+            heartParticleSize: 0.045,        // 心形粒子大小
+            heartBrightness: 0.5,            // 心形亮度
+
+            // ---- 心形形状 ----
+            heartScale: 3.0,                 // 心形整体缩放
+            heartRoundness: 0.25,            // 心形顶部圆弧饱满度
+            heartWidthRatio: 1.1,            // 心形宽度比例
+            heartThicknessRatio: 0.8,        // 心形厚度比例
+
+            // ---- 蓝色波浪粒子 ----
+            waveParticleCount: 50000,        // 蓝色波浪粒子总数（5万）
+            waveParticleSize: 0.03,          // 蓝色波浪粒子大小
+            waveBrightness: 0.5,             // 蓝色波浪亮度
+
+            // ---- 背景星星 ----
+            starCount: 300,                  // 星星数量
+            starSize: 0.04,                  // 星星大小
+            starBrightness: 0.7,             // 星星亮度
+
+            // ---- 心形颜色（上浅下深） ----
+            heartColorTop: '#ff6b9d',
+            heartColorBottom: '#c44569',
+
+            // ---- 蓝色波浪颜色 ----
+            waveColor1: '#4ecdc4',
+            waveColor2: '#2c7fb8',
+
+            // ---- 文字颜色（金色渐变） ----
+            textColorTop: '#ffd700',
+            textColorBottom: '#ff8c42',
+
+            // ---- 文字位置与大小 ----
+            textYPosition: -3.2,
+            textZPosition: 0.5,
+            textWorldWidth: 4.8,
+
+            // ---- 动画与旋转 ----
+            autoRotate: true,
+            rotationSpeed: 0.25,
+            waveAmplitude: 0.025,
+            waveFrequency: 1.4,
+
+            // ---- 场景其他 ----
+            fogDensity: 0.0025,
+            cameraZ: 9,
+        };
+
+        // 移动端自适应（保留但降低缩放因子，以尽量保持粒子数）
+        const isMobile = window.innerWidth < 768;
+        if (isMobile) {
+            // 移动端适当降低粒子数，避免性能问题，但可手动调整
+            CONFIG.heartParticleCount = Math.floor(CONFIG.heartParticleCount * 0.4); // 约8万
+            CONFIG.waveParticleCount = Math.floor(CONFIG.waveParticleCount * 0.4);   // 约2万
+            CONFIG.starCount = Math.floor(CONFIG.starCount * 0.7);
+        }
+        const DPR = Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2);
+
+        // ==================== 场景初始化 ====================
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0a0a14, CONFIG.fogDensity);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, CONFIG.cameraZ);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(DPR);
+        renderer.setClearColor(0x0a0a14, 1);
+        document.body.appendChild(renderer.domElement);
+
+        // ==================== 粒子纹理 ====================
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.3, 'rgba(255,255,255,0.9)');
+            gradient.addColorStop(0.6, 'rgba(255,220,220,0.5)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 64, 64);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+        const particleTexture = createParticleTexture();
+
+        // ==================== 工具函数 ====================
+        function lerpColor(hex1, hex2, t) {
+            const c1 = new THREE.Color(hex1);
+            const c2 = new THREE.Color(hex2);
+            const c = c1.clone().lerp(c2, t);
+            return { r: c.r, g: c.g, b: c.b };
+        }
+        function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+        function randomRange(min, max) { return min + Math.random() * (max - min); }
+
+        // ==================== 真3D心形体积采样（圆润优化） ====================
+        function heartEquation(x, y, z) {
+            const x2 = x * x;
+            const y2 = y * y;
+            const z2 = z * z;
+            const term1 = x2 + 1.8 * y2 + z2 - 1.0;
+            return term1 * term1 * term1 - 0.7 * x2 * z2 * z - 0.08 * y2 * z2 * z;
+        }
+
+        function generateHeartVolumePoints(count) {
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const phases = new Float32Array(count);
+            const minX = -1.3, maxX = 1.3;
+            const minY = -1.3, maxY = 1.3;
+            const minZ = -1.2, maxZ = 1.2;
+            let accepted = 0;
+            let attempts = 0;
+            const maxAttempts = count * 40;
+
+            while (accepted < count && attempts < maxAttempts) {
+                attempts++;
+                const x = randomRange(minX, maxX);
+                const y = randomRange(minY, maxY);
+                const z = randomRange(minZ, maxZ);
+                if (heartEquation(x, y, z) <= 0) {
+                    let worldX = x;
+                    let worldY = z; // 尖朝下
+                    let worldZ = y;
+
+                    if (worldY > 0) {
+                        const expandFactor = 1 + worldY * CONFIG.heartRoundness * 0.6;
+                        worldX *= expandFactor;
+                        worldZ *= expandFactor;
+                    }
+
+                    worldX *= CONFIG.heartWidthRatio;
+                    worldZ *= CONFIG.heartThicknessRatio;
+
+                    const scale = CONFIG.heartScale;
+                    positions[accepted * 3] = worldX * scale;
+                    positions[accepted * 3 + 1] = worldY * scale;
+                    positions[accepted * 3 + 2] = worldZ * scale;
+
+                    const tColor = clamp((worldY + 1.2) / 2.4, 0, 1);
+                    const mixColor = lerpColor(CONFIG.heartColorBottom, CONFIG.heartColorTop, tColor);
+                    colors[accepted * 3] = mixColor.r;
+                    colors[accepted * 3 + 1] = mixColor.g;
+                    colors[accepted * 3 + 2] = mixColor.b;
+                    phases[accepted] = Math.random() * Math.PI * 2;
+                    accepted++;
+                }
+            }
+            return { positions, colors, phases };
+        }
+
+        // ==================== 创建心形组 ====================
+        const heartGroup = new THREE.Group();
+        scene.add(heartGroup);
+
+        const heartData = generateHeartVolumePoints(CONFIG.heartParticleCount);
+        const heartPositions = heartData.positions;
+        const heartColors = heartData.colors;
+        const heartPhases = heartData.phases;
+
+        const heartGeometry = new THREE.BufferGeometry();
+        heartGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(heartPositions), 3));
+        heartGeometry.setAttribute('color', new THREE.BufferAttribute(heartColors, 3));
+
+        const heartMaterial = new THREE.PointsMaterial({
+            size: CONFIG.heartParticleSize,
+            map: particleTexture,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            sizeAttenuation: true,
+            color: new THREE.Color(CONFIG.heartBrightness, CONFIG.heartBrightness, CONFIG.heartBrightness),
+        });
+        const heartParticles = new THREE.Points(heartGeometry, heartMaterial);
+        heartGroup.add(heartParticles);
+
+        // ==================== 创建清晰文字平面 ====================
+        function createTextPlane(text) {
+            const fontSize = isMobile ? 80 : 120;
+            const fontFamily = '"PingFang SC", "Microsoft YaHei", "SimHei", sans-serif';
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `bold ${fontSize}px ${fontFamily}`;
+            const metrics = ctx.measureText(text);
+            const textWidth = Math.ceil(metrics.width);
+            const textHeight = fontSize * 1.4;
+            canvas.width = textWidth + 60;
+            canvas.height = textHeight;
+
+            const ctx2 = canvas.getContext('2d');
+            ctx2.clearRect(0, 0, canvas.width, canvas.height);
+            ctx2.font = `bold ${fontSize}px ${fontFamily}`;
+            ctx2.textAlign = 'center';
+            ctx2.textBaseline = 'middle';
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            const gradient = ctx2.createLinearGradient(0, centerY - fontSize / 2, 0, centerY + fontSize / 2);
+            gradient.addColorStop(0, CONFIG.textColorTop);
+            gradient.addColorStop(0.6, CONFIG.textColorBottom);
+            gradient.addColorStop(1, CONFIG.textColorBottom);
+            ctx2.fillStyle = gradient;
+            ctx2.fillText(text, centerX, centerY);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+            const aspect = canvas.width / canvas.height;
+            const planeHeight = 1.8;
+            const planeWidth = planeHeight * aspect;
+
+            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+            const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                blending: THREE.NormalBlending,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(0, CONFIG.textYPosition, CONFIG.textZPosition);
+            return mesh;
+        }
+
+        const textMesh = createTextPlane('老飞猪七夕快乐');
+        scene.add(textMesh);
+
+        // ==================== 蓝色粒子波浪 ====================
+        const waveGeometry = new THREE.BufferGeometry();
+        const waveBasePositions = new Float32Array(CONFIG.waveParticleCount * 3);
+        const waveCurrentPositions = new Float32Array(CONFIG.waveParticleCount * 3);
+        const waveColors = new Float32Array(CONFIG.waveParticleCount * 3);
+        const wavePhases = new Float32Array(CONFIG.waveParticleCount);
+
+        for (let i = 0; i < CONFIG.waveParticleCount; i++) {
+            const radius = randomRange(4.0, 8.5);
+            const angle = randomRange(0, Math.PI * 2);
+            const x = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            const y = randomRange(-3.0, 3.0);
+            waveBasePositions[i * 3] = x;
+            waveBasePositions[i * 3 + 1] = y;
+            waveBasePositions[i * 3 + 2] = z;
+            waveCurrentPositions[i * 3] = x;
+            waveCurrentPositions[i * 3 + 1] = y;
+            waveCurrentPositions[i * 3 + 2] = z;
+            const tColor = clamp((y + 3.0) / 6.0, 0, 1);
+            const mixColor = lerpColor(CONFIG.waveColor2, CONFIG.waveColor1, tColor);
+            waveColors[i * 3] = mixColor.r;
+            waveColors[i * 3 + 1] = mixColor.g;
+            waveColors[i * 3 + 2] = mixColor.b;
+            wavePhases[i] = Math.random() * Math.PI * 2;
+        }
+
+        waveGeometry.setAttribute('position', new THREE.BufferAttribute(waveCurrentPositions, 3));
+        waveGeometry.setAttribute('color', new THREE.BufferAttribute(waveColors, 3));
+
+        const waveMaterial = new THREE.PointsMaterial({
+            size: CONFIG.waveParticleSize,
+            map: particleTexture,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            sizeAttenuation: true,
+            opacity: CONFIG.waveBrightness,
+        });
+        const waveParticles = new THREE.Points(waveGeometry, waveMaterial);
+        scene.add(waveParticles);
+
+        // ==================== 背景星空 ====================
+        const starGeometry = new THREE.BufferGeometry();
+        const starPositions = new Float32Array(CONFIG.starCount * 3);
+        const starColors = new Float32Array(CONFIG.starCount * 3);
+        for (let i = 0; i < CONFIG.starCount; i++) {
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const r = 15 + Math.random() * 30;
+            starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+            starPositions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+            starPositions[i * 3 + 2] = r * Math.cos(phi);
+            const brightness = 0.5 + Math.random() * 0.5;
+            starColors[i * 3] = brightness;
+            starColors[i * 3 + 1] = brightness;
+            starColors[i * 3 + 2] = brightness;
+        }
+        starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+        const starMaterial = new THREE.PointsMaterial({
+            size: CONFIG.starSize,
+            map: particleTexture,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true,
+            sizeAttenuation: true,
+            opacity: CONFIG.starBrightness,
+        });
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+        // ==================== 自动缩放功能 ====================
+        function updateScale() {
+            const aspect = window.innerWidth / window.innerHeight;
+            let scale = 1.0;
+            if (aspect < 0.7) {
+                scale = aspect / 0.7;
+            } else if (aspect > 1.5) {
+                scale = 1.5 / aspect;
+            }
+            scale = Math.max(0.6, Math.min(scale, 1.2));
+            const mobileScale = isMobile ? 0.85 : 1.0;
+            heartGroup.scale.setScalar(scale * mobileScale);
+            textMesh.scale.setScalar(scale * (isMobile ? 0.9 : 1.0));
+            textMesh.position.y = CONFIG.textYPosition * scale * mobileScale;
+            camera.position.z = CONFIG.cameraZ / (scale * mobileScale);
+        }
+        updateScale();
+
+        // ==================== 全屏控制（自动全屏 + 按钮备选） ====================
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+
+        function isFullscreen() {
+            return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        }
+
+        function enterFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(() => {});
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.mozRequestFullScreen) {
+                elem.mozRequestFullScreen();
+            }
+        }
+
+        function exitFullscreen() {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            }
+        }
+
+        // 自动全屏尝试
+        function attemptAutoFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(() => {
+                    fullscreenBtn.style.display = 'block';
+                });
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.mozRequestFullScreen) {
+                elem.mozRequestFullScreen();
+            } else {
+                fullscreenBtn.style.display = 'block';
+            }
+        }
+
+        // 页面加载后尝试自动全屏
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                attemptAutoFullscreen();
+            }, 100);
+        });
+
+        // 按钮点击切换全屏
+        fullscreenBtn.addEventListener('click', () => {
+            if (isFullscreen()) {
+                exitFullscreen();
+            } else {
+                enterFullscreen();
+            }
+        });
+
+        // 全屏状态变化时更新按钮显示
+        function updateFullscreenButton() {
+            if (isFullscreen()) {
+                fullscreenBtn.style.display = 'none';
+            } else {
+                // 如果自动全屏失败且用户没有手动进入，显示按钮
+                if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                    fullscreenBtn.style.display = 'block';
+                }
+            }
+        }
+
+        document.addEventListener('fullscreenchange', updateFullscreenButton);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+        document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+
+        // ==================== 交互控制旋转 ====================
+        let mouseDown = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let targetRotationY = 0;
+        let targetRotationX = 0;
+        let currentRotationY = 0;
+        let currentRotationX = 0;
+        const rotationDamping = 0.08;
+        const minPolarAngle = -Math.PI / 3;
+        const maxPolarAngle = Math.PI / 3;
+
+        function handleMouseDown(e) { mouseDown = true; previousMousePosition = { x: e.clientX, y: e.clientY }; }
+        function handleMouseMove(e) {
+            if (!mouseDown) return;
+            const deltaX = e.clientX - previousMousePosition.x;
+            const deltaY = e.clientY - previousMousePosition.y;
+            targetRotationY += deltaX * 0.005;
+            targetRotationX += deltaY * 0.005;
+            targetRotationX = clamp(targetRotationX, minPolarAngle, maxPolarAngle);
+            previousMousePosition = { x: e.clientX, y: e.clientY };
+        }
+        function handleMouseUp() { mouseDown = false; }
+        function handleWheel(e) {
+            e.preventDefault();
+            camera.position.z += e.deltaY * 0.003;
+            camera.position.z = clamp(camera.position.z, 4, 15);
+        }
+        function handleTouchStart(e) {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                mouseDown = true;
+                previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+        }
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (e.touches.length === 1 && mouseDown) {
+                const deltaX = e.touches[0].clientX - previousMousePosition.x;
+                const deltaY = e.touches[0].clientY - previousMousePosition.y;
+                targetRotationY += deltaX * 0.005;
+                targetRotationX += deltaY * 0.005;
+                targetRotationX = clamp(targetRotationX, minPolarAngle, maxPolarAngle);
+                previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+        }
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            mouseDown = false;
+        }
+        function handleResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(DPR);
+            updateScale();
+        }
+
+        // ==================== 动画循环 ====================
+        let lastTime = performance.now();
+
+        function animate(now) {
+            const deltaTime = Math.min((now - lastTime) / 1000, 0.1);
+            lastTime = now;
+            const time = now * 0.001;
+
+            // 心形组自动旋转
+            if (CONFIG.autoRotate && !mouseDown) {
+                targetRotationY += CONFIG.rotationSpeed * deltaTime;
+            }
+            currentRotationY += (targetRotationY - currentRotationY) * rotationDamping;
+            currentRotationX += (targetRotationX - currentRotationX) * rotationDamping;
+            heartGroup.rotation.y = currentRotationY;
+            heartGroup.rotation.x = currentRotationX;
+
+            // 心形表面微小波动
+            const heartPos = heartGeometry.attributes.position.array;
+            for (let i = 0; i < CONFIG.heartParticleCount; i++) {
+                const idx = i * 3;
+                const phase = heartPhases[i];
+                const waveX = Math.sin(time * CONFIG.waveFrequency + phase) * CONFIG.waveAmplitude;
+                const waveY = Math.cos(time * CONFIG.waveFrequency * 0.8 + phase) * CONFIG.waveAmplitude;
+                heartPos[idx] = heartPositions[idx] + waveX;
+                heartPos[idx + 1] = heartPositions[idx + 1] + waveY;
+            }
+            heartGeometry.attributes.position.needsUpdate = true;
+
+            // 文字始终面向相机
+            textMesh.lookAt(camera.position);
+
+            // 蓝色波浪动态
+            const wavePos = waveGeometry.attributes.position.array;
+            for (let i = 0; i < CONFIG.waveParticleCount; i++) {
+                const idx = i * 3;
+                const baseX = waveBasePositions[idx];
+                const baseY = waveBasePositions[idx + 1];
+                const baseZ = waveBasePositions[idx + 2];
+                const waveOffset = Math.sin(baseX * 0.6 + time * 1.5) * 0.35 +
+                                   Math.cos(baseZ * 0.8 + time * 1.2) * 0.35 +
+                                   Math.sin((baseX + baseZ) * 0.4 + time * 2.0) * 0.25;
+                wavePos[idx] = baseX;
+                wavePos[idx + 1] = baseY + waveOffset * 0.8;
+                wavePos[idx + 2] = baseZ;
+            }
+            waveGeometry.attributes.position.needsUpdate = true;
+
+            // 星空缓慢旋转
+            stars.rotation.y += 0.0005;
+            stars.rotation.x += 0.0003;
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+
+        // ==================== 事件绑定与启动 ====================
+        renderer.domElement.addEventListener('mousedown', handleMouseDown);
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
+        renderer.domElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+        renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+        renderer.domElement.addEventListener('touchend', handleTouchEnd, { passive: false });
+        window.addEventListener('resize', handleResize);
+
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>
